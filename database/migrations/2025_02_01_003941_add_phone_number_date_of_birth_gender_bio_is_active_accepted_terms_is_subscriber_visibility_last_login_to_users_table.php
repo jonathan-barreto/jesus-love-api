@@ -19,6 +19,9 @@ return new class extends Migration
             $table->text('bio')->nullable();
             $table->boolean('is_active')->default(false);
             $table->boolean('accepted_terms')->default(false);
+            $table->boolean('is_subscriber')->default(false);
+            $table->boolean('visibility')->default(true);
+            $table->timestamp('last_login')->nullable();
         });
     }
 
@@ -29,7 +32,17 @@ return new class extends Migration
     {
         Schema::table('users', function (Blueprint $table) {
             //
-            $table->dropColumn(['phone_number', 'gender', 'bio', 'is_active', 'accepted_terms']);
+            $table->dropColumn([
+                'phone_number', 
+                'date_of_birth', 
+                'gender', 
+                'bio', 
+                'is_active', 
+                'accepted_terms', 
+                'is_subscriber', 
+                'visibility', 
+                'last_login'
+            ]);
         });
     }
 };

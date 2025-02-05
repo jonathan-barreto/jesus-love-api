@@ -30,7 +30,7 @@ class MatchController extends Controller
         $userLat = $user->address->lat;
         $userLong = $user->address->long;
 
-        // Busca perfis correspondentes
+        // Busca perfis correspondentes (somente usuários ativos)
         $profiles = User::with([
             'userDenomination.denomination',
             'address',
@@ -39,34 +39,33 @@ class MatchController extends Controller
         ])
             ->where('gender', $genderToMatch)
             ->where('id', '!=', $user->id)
+            ->where('is_active', false)
             ->whereRaw('TIMESTAMPDIFF(YEAR, date_of_birth, CURDATE()) BETWEEN ? AND ?', [$ageMin, $ageMax])
             ->whereHas('address', function ($query) use ($userLat, $userLong, $maxDistance) {
                 $query->whereRaw("
-                6371 * acos(
-                    cos(radians(?)) *
-                    cos(radians(lat)) *
-                    cos(radians(`long`) - radians(?)) +
-                    sin(radians(?)) *
-                    sin(radians(lat))
-                ) <= ?
-            ", [$userLat, $userLong, $userLat, $maxDistance]);
+            6371 * acos(
+                cos(radians(?)) *
+                cos(radians(lat)) *
+                cos(radians(`long`) - radians(?)) +
+                sin(radians(?)) *
+                sin(radians(lat))
+            ) <= ?
+        ", [$userLat, $userLong, $userLat, $maxDistance]);
             })
             ->get()
             ->map(function ($profile) use ($userLat, $userLong) {
-                $storageUrl = env('SUPABASE_STORAGE_URL');
+                $storageUrl = 'https://epjmiianomyfekdjufod.supabase.co/storage/v1/object/public/photos';
 
-                // Calcula a idade
+                // Calcula a idade corretamente
                 $age = $profile->date_of_birth
-                    ? floor(abs(now()->diffInSeconds(\Carbon\Carbon::parse($profile->date_of_birth)) / (60 * 60 * 24 * 365)))
+                    ? \Carbon\Carbon::parse($profile->date_of_birth)->age
                     : null;
 
                 // Calcula a distância usando a fórmula de Haversine
                 $distance = $this->calculateDistance($userLat, $userLong, $profile->address->lat, $profile->address->long);
 
                 // Processa fotos
-                $photos = $profile->photos->pluck('photo_name')->map(function ($photoName) use ($storageUrl) {
-                    return "{$storageUrl}/{$photoName}";
-                });
+                $photos = $profile->photos->pluck('photo_name')->map(fn($photoName) => "{$storageUrl}/{$photoName}");
 
                 return [
                     'id' => $profile->id,
@@ -91,6 +90,7 @@ class MatchController extends Controller
         ]);
     }
 
+
     /**
      * Calcula a distância entre dois pontos geográficos usando a fórmula de Haversine.
      *
@@ -100,7 +100,7 @@ class MatchController extends Controller
      * @param float $long2
      * @return float
      */
-    
+
     private function calculateDistance($lat1, $long1, $lat2, $long2)
     {
         $earthRadius = 6371; // Raio da Terra em quilômetros

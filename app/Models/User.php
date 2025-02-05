@@ -28,6 +28,11 @@ class User extends Authenticatable
         'is_active',
         'accepted_terms',
         'date_of_birth',
+        'device_token',
+        'is_subscriber',
+        'visibility',
+        'last_login',
+        'email_verified_at',
     ];
 
     /**
@@ -43,7 +48,6 @@ class User extends Authenticatable
         'accepted_terms',
         'created_at',
         'updated_at',
-        'email_verified_at',
     ];
 
     /**

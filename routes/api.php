@@ -16,6 +16,8 @@ Route::middleware(['auth:sanctum'])->group(function () {
     // Auth routes
     Route::put('/auth/update', [AuthController::class, 'update']);
     Route::get('/auth/profile', [AuthController::class, 'profile']);
+    Route::get('/auth/send-email-code-confirmation', [AuthController::class, 'sendEmailCodeConfirmation']);
+    Route::post('/auth/verify-email-code', [AuthController::class, 'verifyEmailCode']);
     Route::get('/auth/logout', [AuthController::class, 'logout']);
 
     // Addresses routes
