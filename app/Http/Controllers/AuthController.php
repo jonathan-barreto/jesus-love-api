@@ -186,80 +186,59 @@ class AuthController extends Controller
         try {
             $user = $request->user();
 
-            // Verifica se o usuário já confirmou o e-mail
-            if ($user->email_verified_at !== null) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Seu e-mail já foi verificado.',
-                ], 200);
-            }
-
-            // Verifica se já existe um código de verificação válido
-            $existingVerification = EmailVerification::where('user_id', $user->id)
-                ->where('expires_at', '>', Carbon::now())
-                ->first();
-
-            if ($existingVerification) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Você já tem um código de verificação ativo. Aguarde ele expirar para solicitar um novo.',
-                ], 200);
-            }
-
             // Gerar um novo código de 4 dígitos numérico
             $verificationCode = str_pad(mt_rand(0, 9999), 4, '0', STR_PAD_LEFT);
-            $expiresAt = Carbon::now()->addMinutes(5);
 
             // Criar ou atualizar código de verificação no banco
             EmailVerification::updateOrCreate(
                 ['user_id' => $user->id],
                 [
                     'code' => $verificationCode,
-                    'expires_at' => $expiresAt,
+                    'expires_at' => Carbon::now()->addMinutes(5),
                 ]
             );
 
             // Conteúdo do e-mail
             $htmlContent = "
-        <div style='font-family: Arial, sans-serif; text-align: left; padding: 20px; background-color: #ffffff;'>
+        <div style='font-family: Arial, sans-serif; text-align: center; padding: 20px; background-color: #ffffff;'>
             <div style='max-width: 500px; background-color: white; padding: 20px; border-radius: 10px; 
-                        box-shadow: 0 0 10px rgba(0,0,0,0.1); margin: 0;'>
-                <h1 style='color: #6E0000; text-align: center;'>Bem-vindo(a) ao Jesus Love! 🙏</h1>
-                <p style='font-size: 16px; color: #333; text-align: center;'>Ficamos felizes em tê-lo conosco! Para começar, 
-                confirme seu e-mail utilizando o código abaixo:</p>
+                        box-shadow: 0 0 10px rgba(0,0,0,0.1); margin: auto;'>
+                <h1 style='color: #6E0000;'>Seja muito bem-vindo(a) ao Jesus Love! 🙏</h1>
+                <p style='font-size: 16px; color: #333;'>Estamos muito felizes por ter você aqui! Para começar essa jornada,
+                basta confirmar seu e-mail utilizando o código abaixo:</p>
                 <div style='font-size: 28px; font-weight: bold; color: white; background-color: #6E0000; 
                             display: block; padding: 15px 30px; border-radius: 5px; margin: 10px auto; 
                             letter-spacing: 2px; text-align: center; max-width: 150px;'>
                     {$verificationCode}
                 </div>
-                <p style='color: #777; text-align: center;'>O código expira em <strong>5 minutos</strong>.</p>
-                <p style='font-size: 14px; color: #6E0000; text-align: center;'>Que Deus abençoe sua jornada! ❤️</p>
+                <p style='color: #777;'>O código expira em <strong>5 minutos</strong>.</p>
+                <p style='font-size: 14px; color: #6E0000;'>Que Deus abençoe sua caminhada e traga muitas bênçãos para sua vida! ❤️</p>
             </div>
         </div>
-    ";
+        ";
 
-            $textContent = "Bem-vindo ao Jesus Love! 🙏\n\n"
-                . "Ficamos felizes em tê-lo conosco! Para começar, confirme seu e-mail utilizando o código abaixo:\n\n"
+            $textContent = "Seja muito bem-vindo(a) ao Jesus Love! 🙏\n\n"
+                . "Estamos muito felizes por ter você aqui! Para começar essa jornada, basta confirmar seu e-mail utilizando o código abaixo:\n\n"
                 . "CÓDIGO: {$verificationCode}\n\n"
                 . "O código expira em 5 minutos.\n\n"
-                . "Que Deus abençoe sua jornada! ❤️";
+                . "Que Deus abençoe sua caminhada e traga muitas bênçãos para sua vida! ❤️";
 
             // Enviar o e-mail
             Mail::send([], [], function ($message) use ($user, $htmlContent, $textContent) {
                 $message->to($user->email)
-                    ->subject('Bem-vindo ao Jesus Love! Confirme seu e-mail 🙏')
+                    ->subject('Seja bem-vindo(a) ao Jesus Love! Confirme seu e-mail 🙏')
                     ->text($textContent)
                     ->html($htmlContent);
             });
 
             return response()->json([
                 'success' => true,
-                'message' => 'Código de verificação enviado para o seu e-mail. Ele expira em 5 minutos.',
+                'message' => 'Código de verificação enviado para o seu e-mail! Estamos felizes por ter você aqui. 😊',
             ]);
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
-                'message' => 'Erro ao enviar código de verificação.',
+                'message' => 'Ops! Ocorreu um erro ao enviar o código de verificação. Tente novamente.',
             ], 500);
         }
     }
@@ -321,6 +300,43 @@ class AuthController extends Controller
                 'success' => false,
                 'message' => 'Erro ao verificar o código.',
                 'error' => $e->getMessage(),
+            ], 500);
+        }
+    }
+
+    public function updateEmail(Request $request)
+    {
+        try {
+            // Validação do e-mail
+            $validatedData = $request->validate([
+                'email' => 'required|email|unique:users,email', // Garante que o e-mail é válido e único
+            ]);
+
+            $user = $request->user();
+            $newEmail = $validatedData['email'];
+
+            // Atualizar o e-mail do usuário
+            $user->email = $newEmail;
+            $user->email_verified_at = null; // Invalida a verificação anterior
+            $user->save();
+
+            return response()->json([
+                'success' => true,
+                'message' => 'E-mail atualizado com sucesso! Por favor, verifique seu novo e-mail.',
+            ]);
+        } catch (ValidationException $e) {
+            // Capturar erro de validação e retornar mensagem clara
+            $errors = $e->validator->errors();
+            $firstErrorMessage = collect($errors->messages())->flatten()->first();
+
+            return response()->json([
+                'success' => false,
+                'message' => $firstErrorMessage,
+            ], 200);
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Erro ao atualizar o e-mail.',
             ], 500);
         }
     }

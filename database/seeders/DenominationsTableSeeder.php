@@ -26,7 +26,7 @@ class DenominationsTableSeeder extends Seeder
             ['name' => 'Deus é Amor'],
             ['name' => 'Quadrangular'],
             ['name' => 'Universal do Reino de Deus'],
-            ['name' => 'Church'],
+            ['name' => 'Outra'],
         ];
 
         DB::table('denominations')->insert($denominations);
