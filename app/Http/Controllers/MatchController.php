@@ -7,6 +7,8 @@ use App\Models\User;
 use Illuminate\Http\Request;
 use Illuminate\Validation\ValidationException;
 use App\Http\Controllers\NotificationController;
+use App\Models\UserLike;
+use Kreait\Firebase\Contract\Messaging;
 
 class MatchController extends Controller
 {
@@ -14,7 +16,8 @@ class MatchController extends Controller
     public function profiles(Request $request)
     {
         $user = $request->user();
-        $genderToMatch = $user->gender === 'male' ? 'female' : 'male';
+
+        $genderToMatch = $user->userProfile->gender === 'male' ? 'female' : 'male';
 
         $request->validate([
             'distance' => 'required|integer|min:0',
@@ -32,52 +35,86 @@ class MatchController extends Controller
 
         // Busca perfis correspondentes (somente usuários ativos)
         $profiles = User::with([
+            'userProfile',
+            'userAccount',
+            'userPersonalDetail.maritalStatus',
+            'userPersonalDetail.childrenPreference',
+            'userPersonalDetail.education',
             'userDenomination.denomination',
             'address',
             'photos',
             'interests'
         ])
-            ->where('gender', $genderToMatch)
+            ->whereHas('userProfile', function ($query) use ($genderToMatch) {
+                $query->where('gender', $genderToMatch);
+            })
             ->where('id', '!=', $user->id)
-            ->where('is_active', false)
-            ->whereRaw('TIMESTAMPDIFF(YEAR, date_of_birth, CURDATE()) BETWEEN ? AND ?', [$ageMin, $ageMax])
+            ->whereHas('userAccount', function ($query) {
+                $query->where('is_active', true);
+            })
+            ->whereHas('userProfile', function ($query) use ($ageMin, $ageMax) {
+                $query->whereRaw('TIMESTAMPDIFF(YEAR, date_of_birth, CURDATE()) BETWEEN ? AND ?', [$ageMin, $ageMax]);
+            })
             ->whereHas('address', function ($query) use ($userLat, $userLong, $maxDistance) {
                 $query->whereRaw("
-            6371 * acos(
-                cos(radians(?)) *
-                cos(radians(lat)) *
-                cos(radians(`long`) - radians(?)) +
-                sin(radians(?)) *
-                sin(radians(lat))
-            ) <= ?
-        ", [$userLat, $userLong, $userLat, $maxDistance]);
+                    6371 * acos(
+                        cos(radians(?)) *
+                        cos(radians(lat)) *
+                        cos(radians(`long`) - radians(?)) +
+                        sin(radians(?)) *
+                        sin(radians(lat))
+                    ) <= ?
+                ", [$userLat, $userLong, $userLat, $maxDistance]);
             })
             ->get()
-            ->map(function ($profile) use ($userLat, $userLong) {
+            ->map(function ($profile) use ($userLat, $userLong, $user) {
                 $storageUrl = 'https://epjmiianomyfekdjufod.supabase.co/storage/v1/object/public/photos';
 
-                // Calcula a idade corretamente
-                $age = $profile->date_of_birth
-                    ? \Carbon\Carbon::parse($profile->date_of_birth)->age
+                // Calcula a idade
+                $age = optional($profile->userProfile)->date_of_birth
+                    ? \Carbon\Carbon::parse($profile->userProfile->date_of_birth)->age
                     : null;
 
-                // Calcula a distância usando a fórmula de Haversine
+                // Calcula a distância entre os usuários
                 $distance = $this->calculateDistance($userLat, $userLong, $profile->address->lat, $profile->address->long);
 
                 // Processa fotos
                 $photos = $profile->photos->pluck('photo_name')->map(fn($photoName) => "{$storageUrl}/{$photoName}");
 
+                // Verifica se o usuário autenticado já curtiu esse perfil
+                $like = UserLike::where('user_who_liked', $user->id)
+                    ->where('user_liked', $profile->id)
+                    ->first();
+
+                $alreadyLiked = $like && $like->like_type_id == 1;
+                $superLiked = $like && $like->like_type_id == 2;
+
                 return [
                     'id' => $profile->id,
                     'name' => $profile->name,
+                    'email' => $profile->email,
+                    'email_verified_at' => $profile->email_verified_at,
                     'age' => $age,
-                    'gender' => $profile->gender,
-                    'bio' => $profile->bio,
+                    'gender' => optional($profile->userProfile)->gender,
+                    'bio' => optional($profile->userProfile)->bio,
+                    'phone_number' => optional($profile->userProfile)->phone_number,
                     'denomination' => $profile->userDenomination->denomination->name ?? null,
-                    'address' => $profile->address,
+                    'marital_status' => optional($profile->userPersonalDetail)->maritalStatus->name ?? null,
+                    'children_preference' => optional($profile->userPersonalDetail)->childrenPreference->name ?? null,
+                    'education' => optional($profile->userPersonalDetail)->education->name ?? null,
+                    'is_active' => optional($profile->userAccount)->is_active ?? false,
+                    'last_login' => optional($profile->userAccount)->last_login,
+                    'address' => [
+                        'state' => $profile->address->state,
+                        'city' => $profile->address->city,
+                        'lat' => $profile->address->lat,
+                        'long' => $profile->address->long
+                    ],
                     'photos' => $photos,
                     'interests' => $profile->interests->pluck('name'),
-                    'distance' => "{$distance} km", // Adiciona a distância ao retorno
+                    'distance' => "{$distance} km",
+                    'liked' => $alreadyLiked, // Se foi curtido com like normal
+                    'superliked' => $superLiked, // Se foi curtido com superlike
                 ];
             })->toArray();
 
@@ -90,7 +127,6 @@ class MatchController extends Controller
         ]);
     }
 
-
     /**
      * Calcula a distância entre dois pontos geográficos usando a fórmula de Haversine.
      *
@@ -100,7 +136,6 @@ class MatchController extends Controller
      * @param float $long2
      * @return float
      */
-
     private function calculateDistance($lat1, $long1, $lat2, $long2)
     {
         $earthRadius = 6371; // Raio da Terra em quilômetros
@@ -124,18 +159,15 @@ class MatchController extends Controller
 
     public function like(Request $request)
     {
-        //
         try {
-            //code...
+            // Validação dos dados
             $validatedData = $request->validate([
+                'like_type_id' => 'required|integer',
                 'user_liked' => 'required|integer',
             ]);
         } catch (ValidationException $e) {
             $errors = $e->validator->errors();
-
-            $firstErrorMessage = collect(
-                $errors->messages(),
-            )->flatten()->first();
+            $firstErrorMessage = collect($errors->messages())->flatten()->first();
 
             return response()->json([
                 'success' => false,
@@ -144,28 +176,35 @@ class MatchController extends Controller
         }
 
         try {
-            //code...
             $user = $request->user();
+            $likedUserId = $validatedData['user_liked'];
 
-            Like::firstOrCreate([
-                'user_who_liked' => $user->id,
-                'user_liked' => $validatedData['user_liked'],
-            ]);
+            // Tenta enviar a notificação
+            // $notificationController = new NotificationController();
+            // $notificationController->sendLikedNotification($user->id, $likedUserId);
 
-            $reciprocalLike = Like::where('user_who_liked', $validatedData['user_liked'])
+            // Atualiza o like caso já exista, senão cria um novo
+            UserLike::updateOrCreate(
+                [
+                    'user_who_liked' => $user->id,
+                    'user_liked' => $likedUserId,
+                ],
+                [
+                    'like_type_id' => $validatedData['like_type_id']
+                ]
+            );
+
+            // Verifica se há um match recíproco
+            $reciprocalLike = UserLike::where('user_who_liked', $likedUserId)
                 ->where('user_liked', $user->id)
                 ->exists();
 
-            // $notificationController = new NotificationController();
-            // $notificationController->sendLikedNotification($user->id, $validatedData['user_liked']);
-
             return response()->json([
                 'success' => true,
-                'is_match' => $reciprocalLike,
+                'data' => $reciprocalLike,
                 'message' => '',
             ]);
         } catch (\Exception $e) {
-            //throw $th;
             return response()->json([
                 'success' => false,
                 'message' => $e->getMessage(),

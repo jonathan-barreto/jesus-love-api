@@ -2,10 +2,14 @@
 
 use App\Http\Controllers\AddressController;
 use App\Http\Controllers\AuthController;
+use App\Http\Controllers\ChildrenPreferenceController;
+use App\Http\Controllers\EducationController;
+use App\Http\Controllers\MaritalStatusController;
 use App\Http\Controllers\MatchController;
 use App\Http\Controllers\PhotoController;
 use App\Http\Controllers\UserDenominationController;
 use App\Http\Controllers\UserInterestController;
+use App\Http\Controllers\UserPersonalDetailsController;
 use Illuminate\Support\Facades\Route;
 
 // Auth routes
@@ -25,8 +29,20 @@ Route::middleware(['auth:sanctum'])->group(function () {
     Route::post('/addresses/create', [AddressController::class, 'create']);
 
     // Denomination routes
-    Route::get('/denomination', [UserDenominationController::class, 'index']);
+    Route::get('/denominations', [UserDenominationController::class, 'index']);
     Route::post('/denomination/create', [UserDenominationController::class, 'create']);
+
+    // Educations routes
+    Route::get('/educations', [UserPersonalDetailsController::class, 'getEducations']);
+    Route::post('/educations/update', [UserPersonalDetailsController::class, 'updateEducation']);
+
+    // MaritalStatuses routes
+    Route::get('/marital-statuses', [UserPersonalDetailsController::class, 'getMaritalStatuses']);
+    Route::post('/marital-statuses/update', [UserPersonalDetailsController::class, 'updateMaritalStatus']);
+
+    // ChildrenPreference routes
+    Route::get('/children-preference', [UserPersonalDetailsController::class, 'getChildrenPreferences']);
+    Route::post('/children-preference/update', [UserPersonalDetailsController::class, 'updateChildrenPreference']);
 
     // Interests routes
     Route::get('/interests', [UserInterestController::class, 'index']);

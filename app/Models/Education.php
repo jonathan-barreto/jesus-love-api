@@ -5,19 +5,13 @@ namespace App\Models;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 
-class Like extends Model
+class Education extends Model
 {
     use HasFactory;
-    /**
-     * The attributes that are mass assignable.
-     *
-     * @var array<int, string>
-     */
-    protected $fillable = [
-        'id',
-        'user_who_liked',
-        'user_liked',
-    ];
+
+    protected $table = 'educations';
+
+    protected $fillable = ['level'];
 
     /**
      * The attributes that should be hidden for serialization.
@@ -25,8 +19,13 @@ class Like extends Model
      * @var array<int, string>
      */
     protected $hidden = [
-        'id',
         'created_at',
         'updated_at',
     ];
+
+    // Relacionamento com UserPersonalDetail
+    public function userPersonalDetails()
+    {
+        return $this->hasMany(UserPersonalDetail::class, 'education_id');
+    }
 }

@@ -7,6 +7,7 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Validation\ValidationException;
 use App\Models\EmailVerification;
+use App\Models\UserAccount;
 use Illuminate\Support\Facades\Mail;
 use Illuminate\Support\Str;
 use Carbon\Carbon;
@@ -31,11 +32,18 @@ class AuthController extends Controller
         }
 
         try {
-            User::firstOrCreate([
+            $user = User::firstOrCreate([
                 'name' => $validatedData['name'],
                 'email' => $validatedData['email'],
+            ], [
                 'password' => Hash::make($validatedData['password']),
+            ]);
+
+            UserAccount::firstOrCreate([
+                'user_id' => $user->id,
+            ], [
                 'accepted_terms' => $validatedData['accepted_terms'],
+                'is_active' => false,
             ]);
 
             return response()->json([
@@ -50,17 +58,21 @@ class AuthController extends Controller
         }
     }
 
+    //
     public function login(Request $request)
     {
         try {
+            // Valida os dados do request
             $request->validate([
                 'email' => 'required|string|email',
                 'password' => 'required|string|min:6',
                 'device_token' => 'nullable|string'
             ]);
 
+            // Busca o usuário pelo e-mail
             $user = User::where('email', $request->email)->first();
 
+            // Verifica se o usuário existe e se a senha está correta
             if (!$user || !Hash::check($request->password, $user->password)) {
                 return response()->json([
                     'success' => false,
@@ -68,19 +80,27 @@ class AuthController extends Controller
                 ]);
             }
 
-            if ($request->has('device_token')) {
-                $user->update(['device_token' => $request->device_token]);
+            // Verifica se o user tem um UserAccount associado
+            $userAccount = UserAccount::firstOrCreate(
+                ['user_id' => $user->id], // Condição de busca
+                ['device_token' => $request->device_token ?? null] // Valor padrão ao criar
+            );
+
+            // Se o UserAccount já existia e o request trouxe um device_token, faz update
+            if ($request->has('device_token') && $request->device_token) {
+                $userAccount->update(['device_token' => $request->device_token]);
             }
 
+            // Gera o token de autenticação
             $token = $user->createToken('auth_token')->plainTextToken;
 
             return response()->json([
                 'success' => true,
-                'message' => 'Login realizado com sucesso.',
                 'data' => [
                     'access_token' => $token,
                     'token_type' => 'Bearer',
                 ],
+                'message' => 'Login realizado com sucesso.',
             ]);
         } catch (\Exception $e) {
             return response()->json([
@@ -90,30 +110,28 @@ class AuthController extends Controller
         }
     }
 
+    //
     public function update(Request $request)
     {
         try {
             $validatedData = $request->validate([
                 'name' => 'string|max:255|nullable',
-                'email' => 'string|email|nullable|max:255|unique:users,email,' . $request->user()->id,
                 'phone_number' => 'string|max:255|nullable',
                 'gender' => 'string|max:255|nullable',
                 'age' => 'integer|nullable',
                 'bio' => 'string|max:255|nullable',
             ]);
         } catch (ValidationException $e) {
-            $errors = $e->validator->errors();
-            $firstErrorMessage = collect($errors->messages())->flatten()->first();
-
             return response()->json([
                 'success' => false,
-                'message' => $firstErrorMessage,
+                'message' => collect($e->validator->errors()->messages())->flatten()->first(),
             ]);
         }
 
         try {
             $validatedData = array_filter($validatedData, fn($value) => !is_null($value));
 
+            // Se `age` for enviado, calcular `date_of_birth`
             if (isset($validatedData['age'])) {
                 $yearOfBirth = now()->year - $validatedData['age'];
                 $validatedData['date_of_birth'] = "{$yearOfBirth}-01-01";
@@ -121,40 +139,78 @@ class AuthController extends Controller
             }
 
             $user = $request->user();
-            $user->update($validatedData);
+
+            // Atualizar apenas o campo `name` no modelo `User`
+            if (isset($validatedData['name'])) {
+                $user->update(['name' => $validatedData['name']]);
+            }
+
+            // Atualizar os campos do `UserProfile`
+            $profileData = collect($validatedData)->only(['phone_number', 'gender', 'date_of_birth', 'bio'])->toArray();
+            if (!empty($profileData)) {
+                $user->userProfile()->updateOrCreate(['user_id' => $user->id], $profileData);
+            }
+
+            // Recarregar as informações do usuário após atualização
+            $user->load('userProfile');
 
             return response()->json([
                 'success' => true,
-                'data' => $user,
+                'data' => [
+                    'id' => $user->id,
+                    'name' => $user->name,
+                    'phone_number' => optional($user->userProfile)->phone_number,
+                    'gender' => optional($user->userProfile)->gender,
+                    'date_of_birth' => optional($user->userProfile)->date_of_birth,
+                    'bio' => optional($user->userProfile)->bio,
+                ],
                 'message' => 'Perfil atualizado com sucesso',
             ]);
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
-                'message' => $e->getMessage(),
+                'message' => 'Erro ao atualizar perfil: ' . $e->getMessage(),
             ], 500);
         }
     }
 
+    //
     public function profile(Request $request)
     {
         try {
             $user = $request->user();
 
-            $user->update(['last_login' => now()]);
+            // Atualizar o último login na tabela user_accounts
+            $user->userAccount?->update(['last_login' => now()]);
 
-            $user->load(
+            // Carregar todos os relacionamentos necessários
+            $user->load([
+                'userAccount',
+                'userProfile',
+                'userPersonalDetail.maritalStatus',
+                'userPersonalDetail.childrenPreference',
+                'userPersonalDetail.education',
                 'userDenomination.denomination',
                 'address',
                 'photos',
                 'interests'
-            );
+            ]);
 
+            // Certifique-se de acessar os atributos corretamente
             $denomination = $user->userDenomination->denomination->name ?? null;
+            $maritalStatus = $user->userPersonalDetail->maritalStatus->name ?? null;
+            $childrenPreference = $user->userPersonalDetail->childrenPreference->name ?? null;
+            $education = $user->userPersonalDetail->education->name ?? null;
+
+            // Construção da URL para fotos no Supabase
             $storageUrl = 'https://epjmiianomyfekdjufod.supabase.co/storage/v1/object/public/photos';
             $photos = $user->photos->pluck('photo_name')->map(fn($photoName) => "{$storageUrl}/{$photoName}");
             $interests = $user->interests->pluck('name');
-            $age = $user->date_of_birth ? \Carbon\Carbon::parse($user->date_of_birth)->age : null;
+
+            // Calcular idade com segurança
+            $age = optional($user->userProfile)->date_of_birth
+                ? Carbon::parse($user->userProfile->date_of_birth)->age
+                : null;
 
             return response()->json([
                 'success' => true,
@@ -164,9 +220,15 @@ class AuthController extends Controller
                     'email' => $user->email,
                     'email_verified_at' => $user->email_verified_at,
                     'age' => $age,
-                    'gender' => $user->gender,
-                    'bio' => $user->bio,
+                    'gender' => optional($user->userProfile)->gender,
+                    'bio' => optional($user->userProfile)->bio,
+                    'phone_number' => optional($user->userProfile)->phone_number,
                     'denomination' => $denomination,
+                    'marital_status' => $maritalStatus,
+                    'children_preference' => $childrenPreference,
+                    'education' => $education,
+                    'is_active' => optional($user->userAccount)->is_active ?? false,
+                    'last_login' => optional($user->userAccount)->last_login,
                     'address' => $user->address,
                     'photos' => $photos,
                     'interests' => $interests,
@@ -177,10 +239,12 @@ class AuthController extends Controller
             return response()->json([
                 'success' => false,
                 'message' => 'Erro ao carregar perfil.',
+                'error' => $e->getMessage(),
             ]);
         }
     }
 
+    //
     public function sendEmailCodeConfirmation(Request $request)
     {
         try {
@@ -243,23 +307,23 @@ class AuthController extends Controller
         }
     }
 
+    //
     public function verifyEmailCode(Request $request)
     {
         try {
-            // Validação do código antes de consultar o banco
+            // Validação do código como string numérica com 4 dígitos
             $validatedData = $request->validate([
-                'code' => 'required|numeric|digits:4', // Garante que o código foi enviado e é numérico com 4 dígitos
+                'code' => ['required', 'string', 'regex:/^\d{4}$/'], // Apenas 4 dígitos numéricos, mantendo a string
             ]);
 
             $user = $request->user();
-            $code = $validatedData['code']; // Pegando o código validado
+            $code = $validatedData['code']; // Pegando o código validado como string
 
             // Buscar o código na tabela EmailVerification
             $verification = EmailVerification::where('user_id', $user->id)
                 ->where('code', $code)
                 ->first();
 
-            // Se o código não existir, retorna erro
             if (!$verification) {
                 return response()->json([
                     'success' => false,
@@ -304,6 +368,7 @@ class AuthController extends Controller
         }
     }
 
+    //
     public function updateEmail(Request $request)
     {
         try {
@@ -341,6 +406,7 @@ class AuthController extends Controller
         }
     }
 
+    //
     public function logout(Request $request)
     {
         $request->user()->currentAccessToken()->delete();

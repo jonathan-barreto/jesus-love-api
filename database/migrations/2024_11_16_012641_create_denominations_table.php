@@ -3,6 +3,7 @@
 use Illuminate\Database\Migrations\Migration;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\Schema;
+use Illuminate\Support\Facades\DB;
 
 return new class extends Migration
 {
@@ -13,9 +14,26 @@ return new class extends Migration
     {
         Schema::create('denominations', function (Blueprint $table) {
             $table->id();
-            $table->string('name');
+            $table->string('name')->unique();
             $table->timestamps();
         });
+
+        $denominations = [
+            ['name' => 'Católica'],
+            ['name' => 'Evangélica'],
+            ['name' => 'Batista'],
+            ['name' => 'Adventista'],
+            ['name' => 'Presbiteriana'],
+            ['name' => 'Metodista'],
+            ['name' => 'Assembleia de Deus'],
+            ['name' => 'Congregação Cristã no Brasil'],
+            ['name' => 'Deus é Amor'],
+            ['name' => 'Quadrangular'],
+            ['name' => 'Universal do Reino de Deus'],
+            ['name' => 'Outra'],
+        ];
+
+        DB::table('denominations')->insert($denominations);
     }
 
     /**

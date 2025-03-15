@@ -35,7 +35,7 @@ class UsersTableSeeder extends Seeder
 
             UserDenomination::create([
                 'user_id' => $user->id,
-                'denomination_id' => 7,
+                'denomination_id' => 3,
             ]);
 
             UserInterest::create([
